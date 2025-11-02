@@ -25,7 +25,7 @@ export const transportStore = {
 
     // Call native bridge
     try {
-      await TapelabAudio.startAt(session.playhead);
+      await TapelabAudio.startAt(session.playhead, null);
       console.log('[transport] Playback started successfully');
     } catch (error) {
       console.error('[transport] Failed to start playback:', error);
@@ -142,18 +142,27 @@ export const transportStore = {
 
     // Call native bridge with count-in
     try {
-      // Use count-in recording which handles synchronized start
-      await TapelabAudio.startRecordingWithCountIn(
+      // Use count-in recording which returns duration to wait before starting playback
+      const result = await TapelabAudio.startRecordingWithCountIn(
         fileUri,
         startPosition,
         armedTrack.id,
         session.bpm
       );
-      console.log('[transport] Count-in recording started at', session.bpm, 'BPM');
+      const countInDuration = result.recordWillStartIn || result.countInDuration;
+      console.log('[transport] Count-in started at', session.bpm, 'BPM, duration:', countInDuration, 's');
 
-      // Also start playback engine for other tracks
-      await TapelabAudio.startAt(startPosition);
-      console.log('[transport] Recording started successfully with count-in');
+      // Wait for count-in to finish, then start playback for synchronized timing
+      setTimeout(async () => {
+        try {
+          await TapelabAudio.startAt(startPosition, null);
+          console.log('[transport] Playback started after count-in - synchronized with recording');
+        } catch (err) {
+          console.error('[transport] Failed to start playback after count-in:', err);
+        }
+      }, countInDuration * 1000);
+
+      console.log('[transport] Recording started successfully with hidden click track count-in');
     } catch (error) {
       console.error('[transport] Failed to start count-in recording:', error);
       setIsRecording(false);

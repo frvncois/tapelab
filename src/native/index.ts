@@ -2,14 +2,14 @@ import { NativeModules, NativeEventEmitter } from 'react-native';
 import type { ScheduleRegion } from '../types/audio';
 
 export interface TapelabAPI {
-  startAt(seconds: number): Promise<boolean>;
+  startAt(seconds: number, hostStartTime?: number | null): Promise<boolean>;
   seek(seconds: number): Promise<boolean>;
   stop(): Promise<boolean>;
   setSpeed(rate: number): void;
   clearSchedule(): void;
   scheduleRegions(regions: ScheduleRegion[], fromSeconds: number): void;
   startRecording(fileUri: string, playhead: number, trackId: string): Promise<boolean>;
-  startRecordingWithCountIn(fileUri: string, playhead: number, trackId: string, bpm: number): Promise<boolean>;
+  startRecordingWithCountIn(fileUri: string, playhead: number, trackId: string, bpm: number): Promise<{ recordWillStartIn: number; countInDuration: number }>;
   stopRecording(): Promise<{ duration: number; fileUri?: string }>;
   requestRecordPermission(): Promise<boolean>;
   setTrackVolume(trackId: string, volume: number): void;
@@ -27,8 +27,8 @@ export interface TapelabAPI {
 
 // Mock implementation for now (will be replaced by native module in Milestone C)
 const TapelabAudio: TapelabAPI = NativeModules.TapelabAudio || {
-  startAt: async (seconds: number) => {
-    console.log('[TapelabAudio] startAt:', seconds);
+  startAt: async (seconds: number, hostStartTime?: number | null) => {
+    console.log('[TapelabAudio] startAt:', seconds, hostStartTime);
     return true;
   },
   seek: async (seconds: number) => {
@@ -54,7 +54,8 @@ const TapelabAudio: TapelabAPI = NativeModules.TapelabAudio || {
   },
   startRecordingWithCountIn: async (fileUri: string, playhead: number, trackId: string, bpm: number) => {
     console.log('[TapelabAudio] startRecordingWithCountIn:', { fileUri, playhead, trackId, bpm });
-    return true;
+    const countInDuration = (60 / bpm) * 5; // 5 beats
+    return { recordWillStartIn: countInDuration, countInDuration };
   },
   stopRecording: async () => {
     console.log('[TapelabAudio] stopRecording');
