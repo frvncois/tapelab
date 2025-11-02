@@ -134,35 +134,48 @@ export const transportStore = {
     transportStore._currentRecordingRegionId = regionId;
     transportStore._recordingStartPlayhead = startPosition;
 
-    // Update state
+    // Update state - set recording but NOT playing yet (playback starts after count-in)
     setIsRecording(true);
-    setIsPlaying(true); // Recording implies playback of other tracks
+    console.log('[transport] Recording mode active, waiting for count-in before playback starts');
 
     schedulePlayback(session, startPosition);
 
     // Call native bridge with count-in
     try {
-      // Use count-in recording which returns duration to wait before starting playback
+      // Start count-in (clicks start playing, recording tap installed but gated)
       const result = await TapelabAudio.startRecordingWithCountIn(
         fileUri,
         startPosition,
         armedTrack.id,
         session.bpm
       );
-      const countInDuration = result.recordWillStartIn || result.countInDuration;
+      const { recordStartHostTime, countInDuration } = result;
       console.log('[transport] Count-in started at', session.bpm, 'BPM, duration:', countInDuration, 's');
+      console.log('[transport] recordStartHostTime:', recordStartHostTime);
+      console.log('[transport] ⏳ Waiting for count-in to finish before starting playback...');
 
-      // Wait for count-in to finish, then start playback for synchronized timing
+      // CRITICAL: Wait for count-in to finish BEFORE starting playback
+      // This ensures playhead timer doesn't start during count-in
       setTimeout(async () => {
         try {
+          console.log('[transport] ✅ Count-in finished, starting playback now');
+
+          // NOW set isPlaying to true (playback is actually starting)
+          setIsPlaying(true);
+
           await TapelabAudio.startAt(startPosition, null);
-          console.log('[transport] Playback started after count-in - synchronized with recording');
-        } catch (err) {
-          console.error('[transport] Failed to start playback after count-in:', err);
+          console.log('[transport] Playback started (recording tap will start writing frames via hostTime gate)');
+        } catch (error) {
+          console.error('[transport] Failed to start playback after count-in:', error);
+          setIsRecording(false);
+          setIsPlaying(false);
+          transportStore._currentRecordingUri = null;
+          transportStore._currentRecordingRegionId = null;
+          transportStore._recordingStartPlayhead = null;
+          useSessionStore.getState().setActiveRecordingRegion(null);
+          useSessionStore.getState().removeRegion(regionId);
         }
       }, countInDuration * 1000);
-
-      console.log('[transport] Recording started successfully with hidden click track count-in');
     } catch (error) {
       console.error('[transport] Failed to start count-in recording:', error);
       setIsRecording(false);

@@ -18,6 +18,19 @@ import TapelabAudio from '../native';
 import { transportStore } from '../store/transportStore';
 import { formatTime } from '../utils/time';
 import { useSessionStore } from '../store/sessionStore';
+import TrackEditorSheet from './TrackEditorSheet';
+import type { Track } from '../types/session';
+
+type EditMode = 'crop' | 'move' | null;
+type EditState = {
+  regionId: string;
+  mode: EditMode;
+  pendingUpdates: {
+    startTime?: number;
+    endTime?: number;
+    offset?: number;
+  };
+} | null;
 
 // Fixed zoom scale: 15 pixels per second for a 360s session = 5400px total width
 const PIXELS_PER_SECOND = 15;
@@ -25,6 +38,7 @@ const RULER_HEIGHT = 30;
 const LEFT_GUTTER = 16;
 const ARM_BUTTON_SIZE = 32;
 const ARM_BUTTON_MARGIN = 16;
+const MIN_TRACK_HEIGHT = 60; // Minimum height per track
 
 export default function Timeline() {
   const tracks = useTracks();
@@ -34,6 +48,15 @@ export default function Timeline() {
   const [isDragging, setIsDragging] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => Dimensions.get('window').width);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const [editorTrack, setEditorTrack] = useState<Track | null>(null);
+  const [isEditorVisible, setIsEditorVisible] = useState(false);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const [editState, setEditState] = useState<EditState>(null);
+
+  // Calculate track height dynamically based on available space
+  const trackHeight = containerHeight > 0 && tracks.length > 0
+    ? Math.max(MIN_TRACK_HEIGHT, (containerHeight - RULER_HEIGHT) / tracks.length)
+    : MIN_TRACK_HEIGHT;
 
   const timelineWidth = PIXELS_PER_SECOND * duration;
 
@@ -43,6 +66,96 @@ export default function Timeline() {
 
   const handleLayout = (event: LayoutChangeEvent) => {
     setViewportWidth(event.nativeEvent.layout.width);
+  };
+
+  const handleContainerLayout = (event: LayoutChangeEvent) => {
+    setContainerHeight(event.nativeEvent.layout.height);
+  };
+
+  const handleOpenEditor = (track: Track) => {
+    setEditorTrack(track);
+    setIsEditorVisible(true);
+  };
+
+  const handleCloseEditor = () => {
+    setIsEditorVisible(false);
+  };
+
+  const handleVolumeChange = (volume: number) => {
+    if (editorTrack) {
+      useSessionStore.getState().updateTrackVolume(editorTrack.id, volume);
+    }
+  };
+
+  const handlePanChange = (pan: number) => {
+    if (editorTrack) {
+      useSessionStore.getState().updateTrackPan(editorTrack.id, pan);
+    }
+  };
+
+  const handleEQChange = (band: 'low' | 'mid' | 'high', value: number) => {
+    if (editorTrack) {
+      useSessionStore.getState().updateTrackEQ(editorTrack.id, band, value);
+    }
+  };
+
+  // Region editing handlers
+  const handleCrop = (regionId: string) => {
+    setEditState({ regionId, mode: 'crop', pendingUpdates: {} });
+  };
+
+  const handleMove = (regionId: string) => {
+    setEditState({ regionId, mode: 'move', pendingUpdates: {} });
+  };
+
+  const handleDelete = (regionId: string) => {
+    useSessionStore.getState().removeRegion(regionId);
+  };
+
+  const handleEditUpdate = (regionId: string, updates: { startTime?: number; endTime?: number; offset?: number }) => {
+    setEditState((prev) => {
+      if (!prev || prev.regionId !== regionId) return prev;
+      return {
+        ...prev,
+        pendingUpdates: { ...prev.pendingUpdates, ...updates },
+      };
+    });
+  };
+
+  const handleApplyEdit = () => {
+    if (!editState) return;
+
+    const { regionId, mode, pendingUpdates } = editState;
+
+    if (mode === 'crop') {
+      if (pendingUpdates.startTime !== undefined) {
+        const delta = pendingUpdates.startTime - useSessionStore.getState().session.tracks
+          .flatMap(t => t.regions)
+          .find(r => r.id === regionId)!.startTime;
+        useSessionStore.getState().cropRegionStart(regionId, delta);
+      }
+      if (pendingUpdates.endTime !== undefined) {
+        const region = useSessionStore.getState().session.tracks
+          .flatMap(t => t.regions)
+          .find(r => r.id === regionId)!;
+        const delta = pendingUpdates.endTime - region.endTime;
+        useSessionStore.getState().cropRegionEnd(regionId, delta);
+      }
+    } else if (mode === 'move') {
+      if (pendingUpdates.startTime !== undefined) {
+        const region = useSessionStore.getState().session.tracks
+          .flatMap(t => t.regions)
+          .find(r => r.id === regionId)!;
+        const delta = pendingUpdates.startTime - region.startTime;
+        useSessionStore.getState().moveRegion(regionId, delta);
+      }
+    }
+
+    setEditState(null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditState(null);
   };
 
   const panResponder = useRef(
@@ -65,7 +178,7 @@ export default function Timeline() {
   ).current;
 
   useEffect(() => {
-    const subscription = TapelabAudioEmitter?.addListener('onPlayheadUpdate', (event: { position: number }) => {
+    const playheadSub = TapelabAudioEmitter?.addListener('onPlayheadUpdate', (event: { position: number }) => {
       const position = event.position;
       if (!isDragging) {
         setPlayheadPosition(position);
@@ -79,8 +192,18 @@ export default function Timeline() {
       }
     });
 
+    const debugSub = TapelabAudioEmitter?.addListener('onRecordingDebug', (event: any) => {
+      console.log('[REC DEBUG]', event);
+    });
+
+    const startedSub = TapelabAudioEmitter?.addListener('onRecordingStarted', (event: any) => {
+      console.log('[REC STARTED]', event);
+    });
+
     return () => {
-      subscription?.remove();
+      playheadSub?.remove();
+      debugSub?.remove();
+      startedSub?.remove();
     };
   }, [isDragging]);
 
@@ -126,7 +249,7 @@ export default function Timeline() {
   const overlayWidth = viewportWidth || 0;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={handleContainerLayout}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -149,6 +272,13 @@ export default function Timeline() {
                 track={track}
                 pixelsPerSecond={PIXELS_PER_SECOND}
                 timelineWidth={timelineWidth}
+                trackHeight={trackHeight}
+                editingRegionId={editState?.regionId}
+                editingMode={editState?.mode}
+                onCrop={handleCrop}
+                onMove={handleMove}
+                onDelete={handleDelete}
+                onEditUpdate={handleEditUpdate}
               />
             ))}
 
@@ -159,7 +289,7 @@ export default function Timeline() {
                 {
                   left: playheadX,
                   top: -RULER_HEIGHT,
-                  height: tracks.length * TRACK_ROW_HEIGHT + RULER_HEIGHT,
+                  height: tracks.length * trackHeight + RULER_HEIGHT,
                 },
               ]}
             >
@@ -187,41 +317,71 @@ export default function Timeline() {
           {
             top: RULER_HEIGHT + 8,
             width: overlayWidth,
-            height: tracks.length * TRACK_ROW_HEIGHT,
+            height: tracks.length * trackHeight,
           },
         ]}
       >
         {tracks.map((track, index) => {
-          const rowTop = index * TRACK_ROW_HEIGHT;
+          const rowTop = index * trackHeight;
           const isArmed = track.armed;
           return (
             <View
               key={`${track.id}-overlay`}
               pointerEvents="box-none"
-              style={[styles.controlRow, { top: rowTop, height: TRACK_ROW_HEIGHT }]}
+              style={[styles.controlRow, { top: rowTop, height: trackHeight }]}
             >
               <View style={styles.trackLabel} pointerEvents="none">
                 <Text style={styles.trackName}>{track.name}</Text>
               </View>
 
-              <TouchableOpacity
-                style={[
-                  styles.armButton,
-                  {
-                    backgroundColor: isArmed ? '#FF3B30' : '#3a3a3a',
-                    borderColor: isArmed ? '#FF453A' : '#4a4a4a',
-                  },
-                ]}
-                onPress={() => armTrack(track.id)}
-              >
-                <Text style={[styles.armButtonText, isArmed && styles.armButtonTextActive]}>
-                  {isArmed ? '●' : '○'}
-                </Text>
-              </TouchableOpacity>
+              {/* Show Apply/Cancel buttons when editing */}
+              {editState && (
+                <View style={styles.editButtonGroup}>
+                  <TouchableOpacity style={styles.cancelButton} onPress={handleCancelEdit}>
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.applyButton} onPress={handleApplyEdit}>
+                    <Text style={styles.applyButtonText}>Apply</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <View style={styles.buttonGroup}>
+                <TouchableOpacity
+                  style={styles.editorButton}
+                  onPress={() => handleOpenEditor(track)}
+                >
+                  <Text style={styles.editorButtonText}>⚙</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.armButton,
+                    {
+                      backgroundColor: isArmed ? '#FF3B30' : '#3a3a3a',
+                      borderColor: isArmed ? '#FF453A' : '#4a4a4a',
+                    },
+                  ]}
+                  onPress={() => armTrack(track.id)}
+                >
+                  <Text style={[styles.armButtonText, isArmed && styles.armButtonTextActive]}>
+                    {isArmed ? '●' : '○'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           );
         })}
       </View>
+
+      <TrackEditorSheet
+        visible={isEditorVisible}
+        track={editorTrack}
+        onClose={handleCloseEditor}
+        onVolumeChange={handleVolumeChange}
+        onPanChange={handlePanChange}
+        onEQChange={handleEQChange}
+      />
     </View>
   );
 }
@@ -278,6 +438,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  buttonGroup: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  editorButton: {
+    width: ARM_BUTTON_SIZE,
+    height: ARM_BUTTON_SIZE,
+    borderRadius: ARM_BUTTON_SIZE / 2,
+    backgroundColor: '#3a3a3a',
+    borderColor: '#4a4a4a',
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editorButtonText: {
+    fontSize: 16,
+    color: '#4A90E2',
+  },
   armButton: {
     width: ARM_BUTTON_SIZE,
     height: ARM_BUTTON_SIZE,
@@ -285,7 +464,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    marginRight: ARM_BUTTON_MARGIN,
   },
   armButtonText: {
     fontSize: 16,
@@ -293,5 +471,37 @@ const styles = StyleSheet.create({
   },
   armButtonTextActive: {
     color: '#fff',
+  },
+  editButtonGroup: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  applyButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#34C759',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3DD762',
+  },
+  applyButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cancelButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#3a3a3a',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4a4a4a',
+  },
+  cancelButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

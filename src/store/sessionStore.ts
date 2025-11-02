@@ -13,6 +13,9 @@ interface SessionState {
   cropRegionStart: (regionId: string, delta: number) => void;
   cropRegionEnd: (regionId: string, delta: number) => void;
   armTrack: (trackId: string) => void;
+  updateTrackVolume: (trackId: string, volume: number) => void;
+  updateTrackPan: (trackId: string, pan: number) => void;
+  updateTrackEQ: (trackId: string, band: 'low' | 'mid' | 'high', value: number) => void;
   setPlayhead: (seconds: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
   setIsRecording: (isRecording: boolean) => void;
@@ -153,6 +156,39 @@ export const useSessionStore = create<SessionState>()(
           track.armed = track.id === trackId;
         }
         console.log('[sessionStore] Armed track:', trackId);
+      });
+    },
+
+    // Update track volume (0..1)
+    updateTrackVolume: (trackId: string, volume: number) => {
+      set((state) => {
+        const track = state.session.tracks.find((t) => t.id === trackId);
+        if (track) {
+          track.volume = Math.max(0, Math.min(1, volume));
+          console.log('[sessionStore] Updated track volume:', trackId, track.volume);
+        }
+      });
+    },
+
+    // Update track pan (-1..1)
+    updateTrackPan: (trackId: string, pan: number) => {
+      set((state) => {
+        const track = state.session.tracks.find((t) => t.id === trackId);
+        if (track) {
+          track.pan = Math.max(-1, Math.min(1, pan));
+          console.log('[sessionStore] Updated track pan:', trackId, track.pan);
+        }
+      });
+    },
+
+    // Update track EQ band
+    updateTrackEQ: (trackId: string, band: 'low' | 'mid' | 'high', value: number) => {
+      set((state) => {
+        const track = state.session.tracks.find((t) => t.id === trackId);
+        if (track) {
+          track.eq[band] = Math.max(-12, Math.min(12, value));
+          console.log('[sessionStore] Updated track EQ:', trackId, band, track.eq[band]);
+        }
       });
     },
 

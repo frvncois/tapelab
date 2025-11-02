@@ -9,7 +9,7 @@ export interface TapelabAPI {
   clearSchedule(): void;
   scheduleRegions(regions: ScheduleRegion[], fromSeconds: number): void;
   startRecording(fileUri: string, playhead: number, trackId: string): Promise<boolean>;
-  startRecordingWithCountIn(fileUri: string, playhead: number, trackId: string, bpm: number): Promise<{ recordWillStartIn: number; countInDuration: number }>;
+  startRecordingWithCountIn(fileUri: string, playhead: number, trackId: string, bpm: number): Promise<{ recordStartHostTime: number; countInDuration: number }>;
   stopRecording(): Promise<{ duration: number; fileUri?: string }>;
   requestRecordPermission(): Promise<boolean>;
   setTrackVolume(trackId: string, volume: number): void;
@@ -54,8 +54,9 @@ const TapelabAudio: TapelabAPI = NativeModules.TapelabAudio || {
   },
   startRecordingWithCountIn: async (fileUri: string, playhead: number, trackId: string, bpm: number) => {
     console.log('[TapelabAudio] startRecordingWithCountIn:', { fileUri, playhead, trackId, bpm });
-    const countInDuration = (60 / bpm) * 5; // 5 beats
-    return { recordWillStartIn: countInDuration, countInDuration };
+    const countInDuration = (60 / bpm) * 4; // 4 beats
+    const recordStartHostTime = Date.now() * 1000000; // Mock hostTime in nanoseconds
+    return { recordStartHostTime, countInDuration };
   },
   stopRecording: async () => {
     console.log('[TapelabAudio] stopRecording');
