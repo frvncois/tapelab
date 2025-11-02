@@ -1,0 +1,271 @@
+TAPELAB — CLAUDE BUILD GUIDE (v2.1 Timeline Engine)
+============================================================
+
+0) NON-NEGOTIABLE BEHAVIOR
+------------------------------------------------------------
+1. Headphones required
+   - Record from iPhone mic; playback to headphones only when recording.
+   - If no headphones present, block recording with a clear UI notice.
+
+2. Playback allowed on speaker
+   - When NOT recording, playback may use iPhone speaker or headphones.
+   - When recording, playback is restricted to headphones or Bluetooth output only.
+
+3. No input monitoring
+   - Mic is never routed to speakers. Input is tapped → written to file only.
+
+4. Timeline-driven transport
+   - Session duration fixed to 360s (6:00).
+   - 4 tracks per session, always visible as 4 timeline rows.
+   - Playhead is the single source of truth for play/record/seek.
+
+5. While recording
+   - All other tracks’ regions that overlap the playhead continue to play in headphones.
+
+6. Editing
+   - Regions have startTime, endTime, offset.
+   - Crop start → increases offset and startTime.
+   - Crop end → decreases endTime.
+   - Move region → add delta to startTime and endTime.
+
+7. FX
+   - Track: volume, pan, 3-band EQ.
+   - Region: fade-in/out, reverse, reverb, delay, (room for more later).
+
+
+1) TECH STACK & VERSIONS
+------------------------------------------------------------
+- React Native (Expo Bare) + TypeScript
+- Zustand (+ Immer) for state
+- Swift native module using AVAudioEngine
+- No third-party DSP (use Apple AVAudioUnit*)
+- react-native-svg for waveforms (phase 2)
+
+
+2) INITIALIZE PROJECT
+------------------------------------------------------------
+npx create-expo-app tapelab -t expo-template-blank-typescript
+cd tapelab
+npx expo prebuild --platform ios
+
+yarn add zustand immer @react-navigation/native @react-navigation/native-stack react-native-svg
+npx expo install react-native-gesture-handler react-native-reanimated react-native-screens react-native-safe-area-context expo-file-system
+
+Add to ios/tapelab/Info.plist:
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Tapelab needs microphone access to record audio.</string>
+
+
+3) PROJECT STRUCTURE (create exactly)
+------------------------------------------------------------
+src/
+  components/
+    Transport.tsx
+    Timeline.tsx
+    TrackLane.tsx
+    RegionView.tsx
+  screens/
+    DashboardScreen.tsx
+    SessionScreen.tsx
+  store/
+    sessionStore.ts
+    transportStore.ts
+    selectors.ts
+  native/
+    index.ts
+  types/
+    audio.ts
+    session.ts
+  utils/
+    time.ts
+ios/
+  TapelabAudio/
+    TapelabAudio.swift
+    TapelabAudio.m
+
+Create bridging header:
+  ios/tapelab/tapelab-Bridging-Header.h  →  #import <React/RCTBridgeModule.h>
+Xcode Build Settings → Objective-C Bridging Header:
+  $(PROJECT_DIR)/tapelab/tapelab-Bridging-Header.h
+
+
+4) TYPE CONTRACTS
+------------------------------------------------------------
+File: src/types/session.ts
+------------------------------------------------------------
+export type Seconds = number;
+
+export type Region = {
+  id: string;
+  fileUri: string;      // local file path (file://…)
+  startTime: Seconds;   // absolute on session timeline
+  endTime: Seconds;     // absolute on session timeline
+  offset: Seconds;      // offset inside file
+  reverse: boolean;
+  fadeIn: Seconds;
+  fadeOut: Seconds;
+  effects: {
+    reverb?: { wet: number; preset?: string };
+    delay?: { time: Seconds; feedback: number; mix: number };
+    saturation?: { drive: number; mix: number };
+  };
+};
+
+export type Track = {
+  id: string;
+  name: string;
+  volume: number; // 0..1 (UI), convert to dB in native
+  pan: number;    // -1..1
+  eq: { low: number; mid: number; high: number }; // dB offsets
+  muted: boolean;
+  solo: boolean;
+  armed: boolean;
+  regions: Region[];
+};
+
+export type Session = {
+  id: string;
+  name: string;
+  duration: Seconds; // 360 fixed
+  sampleRate: number; // 48000
+  playhead: Seconds; // 0..duration
+  isPlaying: boolean;
+  isRecording: boolean;
+  tracks: Track[];
+  createdAt: number; // epoch
+};
+
+
+File: src/types/audio.ts
+------------------------------------------------------------
+export type ScheduleRegion = {
+  trackId: string;
+  regionId: string;
+  fileUri: string;
+  startTime: number; // absolute
+  endTime: number;   // absolute
+  offset: number;    // in file
+  reverse: boolean;
+  fadeIn: number;
+  fadeOut: number;
+  track: { volume: number; pan: number; eq: { low: number; mid: number; high: number } };
+  regionFx?: { reverb?: any; delay?: any; saturation?: any };
+};
+
+export type RecordStopResult = { duration: number };
+
+
+5) NATIVE BRIDGE API (design; implement to match)
+------------------------------------------------------------
+File: src/native/index.ts
+------------------------------------------------------------
+export interface TapelabAPI {
+  startAt(seconds: number): Promise<boolean>;
+  seek(seconds: number): Promise<boolean>;
+  stop(): Promise<boolean>;
+  setSpeed(rate: number): void;
+  clearSchedule(): void;
+  scheduleRegions(regions: ScheduleRegion[], fromSeconds: number): void;
+  startRecording(fileUri: string, playhead: number, trackId: string): Promise<boolean>;
+  stopRecording(): Promise<{ duration: number }>;
+  setTrackVolume(trackId: string, volume: number): void;
+  setTrackPan(trackId: string, pan: number): void;
+  setTrackEQ(trackId: string, low: number, mid: number, high: number): void;
+  setRegionFade(regionId: string, fadeIn: number, fadeOut: number): void;
+  setRegionReverse(regionId: string, reverse: boolean): void;
+  setRegionReverb(regionId: string, wet: number, preset?: string): void;
+  setRegionDelay(regionId: string, time: number, feedback: number, mix: number): void;
+  getRoundtripLatency(): Promise<number>;
+  getCurrentRoute(): Promise<string>;
+}
+declare const TapelabAudio: TapelabAPI;
+export default TapelabAudio;
+
+
+6) STATE STORES
+------------------------------------------------------------
+sessionStore.ts: initialize default session (4 tracks, 360s duration).
+transportStore.ts: play(), stop(), seek(), recordStart(), recordStop() logic as detailed.
+
+
+7) UI SKELETON
+------------------------------------------------------------
+DashboardScreen → list/create sessions.
+SessionScreen → header (time + transport), 4 TrackLanes, Timeline, Regions, Transport buttons.
+
+Scaling:
+pixelsPerSecond = screenWidth / 360
+regionLeft = startTime * pps
+regionWidth = (endTime - startTime) * pps
+
+
+8) AUDIO ENGINE GRAPH (Swift)
+------------------------------------------------------------
+Mic input: tapped to WAV file (no monitoring)
+4 tracks: AVAudioPlayerNode → EQ → Reverb → Delay → Pan → Gain → TrackMixer
+All TrackMixers → MainMixer → Varispeed → engine.mainMixerNode → Output
+Region-level FX automated via parameter ramps per region schedule window.
+
+
+9) HEADPHONE-ONLY ENFORCEMENT & PLAYBACK RULES
+------------------------------------------------------------
+JS (recordStart):
+  - await native.getCurrentRoute(); if not headphones → show modal and abort.
+
+Swift logic for session category:
+  - When recording:
+      try session.setCategory(.playAndRecord, mode: .measurement,
+                              options: [.allowBluetoothA2DP, .allowBluetooth])
+  - When not recording:
+      try session.setCategory(.playback, mode: .default, options: [.defaultToSpeaker])
+
+Explanation:
+  This allows playback on the iPhone speaker for preview, but restricts recording
+  to headphones/Bluetooth to avoid mic bleed or feedback.
+
+
+10) FILE HANDLING RULES
+------------------------------------------------------------
+- JS generates filename recording-<timestamp>.wav.
+- Swift ensures file path writable (redirects to Caches if invalid).
+- Remove existing file before writing.
+- Start engine before input tap.
+
+
+11) MILESTONES & ACCEPTANCE
+------------------------------------------------------------
+Milestone A — Scaffolding
+Milestone B — Transport
+Milestone C — Recording
+Milestone D — Editing
+Milestone E — FX
+(Details same as v2 guide.)
+
+
+12) TROUBLESHOOTING
+------------------------------------------------------------
+- Error -54 → unwritable file → redirect to Caches
+- No sound → input tap not connected or engine stopped
+- Desync → wrong sampleTime math
+- FX spikes → too many per-region units
+
+
+13) PHASE 2 ENHANCEMENTS
+------------------------------------------------------------
+Waveforms, Reverse, Offline Bounce, Loop/Metronome, Undo/Redo
+
+
+14) CLAUDE IMPLEMENTATION ORDER
+------------------------------------------------------------
+1. Create all files & type contracts
+2. Build Zustand stores
+3. UI skeleton
+4. Swift bridge shell
+5. Audio graph + scheduling
+6. Recording with safe paths
+7. Headphone rules
+8. Track/region FX
+9. Verify Milestones A–E
+
+END OF GUIDE
+============================================================
