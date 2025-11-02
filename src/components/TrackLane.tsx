@@ -16,6 +16,7 @@ type TrackLaneProps = {
   onCrop?: (regionId: string) => void;
   onMove?: (regionId: string) => void;
   onDelete?: (regionId: string) => void;
+  onReverse?: (regionId: string) => void;
   onEditUpdate?: (regionId: string, updates: { startTime?: number; endTime?: number; offset?: number }) => void;
 };
 
@@ -29,6 +30,7 @@ export default function TrackLane({
   onCrop,
   onMove,
   onDelete,
+  onReverse,
   onEditUpdate,
 }: TrackLaneProps) {
   return (
@@ -57,6 +59,7 @@ export default function TrackLane({
               onCrop={onCrop}
               onMove={onMove}
               onDelete={onDelete}
+              onReverse={onReverse}
             />
           );
         })}

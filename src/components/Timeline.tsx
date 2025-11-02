@@ -112,6 +112,35 @@ export default function Timeline() {
     useSessionStore.getState().removeRegion(regionId);
   };
 
+  const handleReverse = async (regionId: string) => {
+    try {
+      // Find the region to get its file URI
+      const region = useSessionStore.getState().session.tracks
+        .flatMap(t => t.regions)
+        .find(r => r.id === regionId);
+
+      if (!region) {
+        console.error('[Timeline] Region not found:', regionId);
+        return;
+      }
+
+      console.log('[Timeline] Reversing audio for region:', regionId);
+
+      // Call native method to reverse the audio file
+      const result = await TapelabAudio.reverseAudioFile(region.fileUri);
+
+      if (result.success) {
+        console.log('[Timeline] Audio reversed successfully');
+        // File has been reversed in place, no need to update fileUri
+        // Just trigger a re-render by updating a dummy value or forcing schedule update
+      } else {
+        console.error('[Timeline] Failed to reverse audio');
+      }
+    } catch (error) {
+      console.error('[Timeline] Error reversing audio:', error);
+    }
+  };
+
   const handleEditUpdate = (regionId: string, updates: { startTime?: number; endTime?: number; offset?: number }) => {
     setEditState((prev) => {
       if (!prev || prev.regionId !== regionId) return prev;
@@ -278,6 +307,7 @@ export default function Timeline() {
                 onCrop={handleCrop}
                 onMove={handleMove}
                 onDelete={handleDelete}
+                onReverse={handleReverse}
                 onEditUpdate={handleEditUpdate}
               />
             ))}

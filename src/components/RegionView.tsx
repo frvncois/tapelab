@@ -8,9 +8,10 @@ type RegionViewProps = {
   onCrop?: (regionId: string) => void;
   onMove?: (regionId: string) => void;
   onDelete?: (regionId: string) => void;
+  onReverse?: (regionId: string) => void;
 };
 
-export default function RegionView({ region, pixelsPerSecond, onCrop, onMove, onDelete }: RegionViewProps) {
+export default function RegionView({ region, pixelsPerSecond, onCrop, onMove, onDelete, onReverse }: RegionViewProps) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
 
@@ -53,6 +54,11 @@ export default function RegionView({ region, pixelsPerSecond, onCrop, onMove, on
     );
   };
 
+  const handleReverse = () => {
+    setMenuVisible(false);
+    onReverse?.(region.id);
+  };
+
   return (
     <>
       <Pressable
@@ -92,6 +98,10 @@ export default function RegionView({ region, pixelsPerSecond, onCrop, onMove, on
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={handleMove}>
               <Text style={styles.menuItemText}>↔️ Move</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={handleReverse}>
+              <Text style={styles.menuItemText}>🔄 Reverse</Text>
             </TouchableOpacity>
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={handleDelete}>

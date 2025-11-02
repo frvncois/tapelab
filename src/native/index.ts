@@ -23,6 +23,7 @@ export interface TapelabAPI {
   getCurrentRoute(): Promise<string>;
   generateWaveform(fileUri: string, samplesPerPixel: number): Promise<{ fileUri: string; peaks: number[]; duration: number }>;
   bounceSession(outputUri: string, duration: number): Promise<{ fileUri: string; duration: number }>;
+  reverseAudioFile(fileUri: string): Promise<{ fileUri: string; success: boolean }>;
 }
 
 // Mock implementation for now (will be replaced by native module in Milestone C)
@@ -102,6 +103,10 @@ const TapelabAudio: TapelabAPI = NativeModules.TapelabAudio || {
   bounceSession: async (outputUri: string, duration: number) => {
     console.log('[TapelabAudio] bounceSession:', outputUri, duration);
     return { fileUri: outputUri, duration };
+  },
+  reverseAudioFile: async (fileUri: string) => {
+    console.log('[TapelabAudio] reverseAudioFile:', fileUri);
+    return { fileUri, success: true };
   },
 };
 
